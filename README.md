@@ -105,6 +105,14 @@ go run ./cmd/nebu-sql --json -c "
 
 ## Development
 
+The official development environment for this repo is the Nix flake:
+
+```bash
+nix develop
+```
+
+That shell provides the pinned Go toolchain, DuckDB, GoReleaser, and the other tools used by the project.
+
 For local development, the fastest loop is:
 
 1. install or update a processor with `nebu install <name>`
