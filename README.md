@@ -105,6 +105,14 @@ go run ./cmd/nebu-sql --json -c "
 
 ## Development
 
+The official development environment for this repo is the Nix flake:
+
+```bash
+nix develop
+```
+
+That shell provides the pinned Go toolchain, DuckDB, GoReleaser, and the other tools used by the project. CI also verifies both `nix develop` and `nix build` so the flake stays healthy.
+
 For local development, the fastest loop is:
 
 1. install or update a processor with `nebu install <name>`
@@ -146,5 +154,6 @@ Current tests cover:
 
 - `--version` reads the injected linker value when present
 - `.goreleaser.yaml` injects `github.com/withObsrvr/nebu-sql/internal/version.Value={{.Version}}`
-- GitHub Actions CI runs on pushes and pull requests
+- the Nix package version derives from flake metadata (`rev` / `shortRev` / `lastModifiedDate`) when available
+- GitHub Actions CI runs on pushes and pull requests, including `nix develop` and `nix build`
 - GitHub Actions release automation runs on `v*` tags
