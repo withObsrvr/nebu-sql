@@ -23,7 +23,17 @@
             });
           };
         };
-        versionString = if self ? shortRev then self.shortRev else "dev";
+        versionString =
+          if self ? rev then self.rev
+          else if self ? shortRev then self.shortRev
+          else "dev";
+        packageVersion =
+          if self ? rev && self ? lastModifiedDate then
+            "unstable-${builtins.substring 0 8 self.lastModifiedDate}-${self.shortRev}"
+          else if self ? shortRev then
+            "unstable-${self.shortRev}"
+          else
+            "dev";
       in {
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -67,7 +77,7 @@
 
         packages.default = pkgs.buildGoModule {
           pname = "nebu-sql";
-          version = "0.1.0";
+          version = packageVersion;
           src = ./.;
           vendorHash = "sha256-Nwy0guUvdW6Q5qsxHTX5wmOWnDaPfOKJZJNVJ334b0k=";
 
@@ -88,5 +98,7 @@
             mainProgram = "nebu-sql";
           };
         };
+
+        checks.default = self.packages.${system}.default;
       });
 }
