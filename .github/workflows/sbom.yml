@@ -1,0 +1,16 @@
+name: SBOM
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: SCF-Public-Goods-Maintenance/pg-atlas-sbom-action@e732fb836ead361371a7a7aad3c992ceb50c757d
