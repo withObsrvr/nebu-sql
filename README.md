@@ -2,6 +2,10 @@
 
 `nebu-sql` makes installed nebu processors queryable as DuckDB table sources.
 
+**Start here:**
+- [Cookbook](./docs/COOKBOOK.md) — practical queries to try immediately
+- [queries/](./queries/) — ready-to-run SQL files
+
 Instead of manually piping processor output into `read_json('/dev/stdin')`, you can write SQL like:
 
 ```sql
@@ -77,6 +81,16 @@ Why that matters:
 
 In short: piping to DuckDB is the Unix primitive; `nebu-sql` turns that primitive into a reusable SQL interface.
 
+## Cookbook
+
+See [docs/COOKBOOK.md](./docs/COOKBOOK.md) for a growing set of practical queries: counting rows, exploring event shapes, aggregating token volume, comparing processors, joining outputs, and exporting results.
+
+There is also a small [`queries/`](./queries/) directory with ready-to-run SQL files you can execute with:
+
+```bash
+nebu-sql --file queries/top-assets.sql
+```
+
 ## Examples
 
 ```bash
@@ -102,6 +116,8 @@ go run ./cmd/nebu-sql --json -c "
   limit 3
 "
 ```
+
+For more examples, see the [cookbook](./docs/COOKBOOK.md).
 
 ## Development
 
