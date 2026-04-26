@@ -31,6 +31,25 @@ func TestParseArgs_Query(t *testing.T) {
 	}
 }
 
+func TestParseArgs_JSONOutput(t *testing.T) {
+	cfg, err := parseArgs([]string{"--json", "-c", "select 1"}, func(string) ([]byte, error) {
+		t.Fatal("readFile should not be called")
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.Query != "select 1" {
+		t.Fatalf("Query = %q, want %q", cfg.Query, "select 1")
+	}
+	if !cfg.JSONOutput {
+		t.Fatal("JSONOutput = false, want true")
+	}
+	if cfg.ShowVersion {
+		t.Fatal("ShowVersion = true, want false")
+	}
+}
+
 func TestParseArgs_File(t *testing.T) {
 	cfg, err := parseArgs([]string{"--file", "q.sql"}, func(path string) ([]byte, error) {
 		if path != "q.sql" {
@@ -142,6 +161,19 @@ func TestPrintRows_JSONOutput(t *testing.T) {
 	}
 	if got["b"] != "x" {
 		t.Fatalf("b = %#v, want x", got["b"])
+	}
+}
+
+func TestRunCLI_VersionOutput(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runCLI([]string{"--version"}, &buf, func(string) ([]byte, error) {
+		t.Fatal("readFile should not be called")
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("runCLI() error = %v", err)
+	}
+	if got := strings.TrimSpace(buf.String()); got == "" {
+		t.Fatal("version output is empty")
 	}
 }
 
