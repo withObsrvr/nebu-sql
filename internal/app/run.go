@@ -21,7 +21,31 @@ import (
 	"github.com/withObsrvr/nebu-sql/internal/version"
 )
 
+type Config struct {
+	Query       string
+	JSONOutput  bool
+	ShowVersion bool
+}
+
 func Run(args []string) error {
+	cfg, err := parseArgs(args, os.ReadFile)
+	if err != nil {
+		return err
+	}
+	if cfg.ShowVersion {
+		if _, err := fmt.Fprintln(os.Stdout, version.String()); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return run(ctx, cfg, os.Stdout)
+}
+
+func parseArgs(args []string, readFile func(string) ([]byte, error)) (Config, error) {
 	fs := flag.NewFlagSet("nebu-sql", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -35,29 +59,29 @@ func Run(args []string) error {
 	fs.BoolVar(&showVersion, "version", false, "Print nebu-sql version")
 
 	if err := fs.Parse(args); err != nil {
-		return usageError(err)
+		return Config{}, usageError(err)
 	}
 	if showVersion {
-		fmt.Println(version.String())
-		return nil
+		return Config{ShowVersion: true}, nil
 	}
 	if strings.TrimSpace(query) == "" && strings.TrimSpace(file) == "" {
-		return usageError(errors.New("either -c or --file is required"))
+		return Config{}, usageError(errors.New("either -c or --file is required"))
 	}
 	if strings.TrimSpace(query) != "" && strings.TrimSpace(file) != "" {
-		return usageError(errors.New("use either -c or --file, not both"))
+		return Config{}, usageError(errors.New("use either -c or --file, not both"))
 	}
 	if strings.TrimSpace(file) != "" {
-		b, err := os.ReadFile(file)
+		b, err := readFile(file)
 		if err != nil {
-			return fmt.Errorf("read query file %q: %w", file, err)
+			return Config{}, fmt.Errorf("read query file %q: %w", file, err)
 		}
 		query = string(b)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	return Config{Query: query, JSONOutput: jsonOutput}, nil
+}
 
+func run(ctx context.Context, cfg Config, stdout io.Writer) error {
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		return fmt.Errorf("open duckdb: %w", err)
@@ -74,7 +98,7 @@ func Run(args []string) error {
 		return fmt.Errorf("register nebu() table function: %w", err)
 	}
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := db.QueryContext(ctx, cfg.Query)
 	if err != nil {
 		if isCanceled(ctx, err) {
 			return nil
@@ -83,7 +107,7 @@ func Run(args []string) error {
 	}
 	defer rows.Close()
 
-	if err := printRows(rows, jsonOutput); err != nil {
+	if err := printRows(stdout, rows, cfg.JSONOutput); err != nil {
 		if isCanceled(ctx, err) {
 			return nil
 		}
@@ -96,7 +120,7 @@ func usageError(err error) error {
 	return fmt.Errorf("%w\n\nusage:\n  nebu-sql -c \"SELECT ...\"\n  nebu-sql --file query.sql\n  nebu-sql --version\n\noptions:\n  --json      emit newline-delimited JSON rows\n  --version   print version", err)
 }
 
-func printRows(rows *sql.Rows, jsonOutput bool) error {
+func printRows(w io.Writer, rows *sql.Rows, jsonOutput bool) error {
 	cols, err := rows.Columns()
 	if err != nil {
 		return fmt.Errorf("read columns: %w", err)
@@ -109,7 +133,7 @@ func printRows(rows *sql.Rows, jsonOutput bool) error {
 	}
 
 	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(w)
 		for rows.Next() {
 			if err := rows.Scan(scanArgs...); err != nil {
 				return fmt.Errorf("scan row: %w", err)
@@ -128,7 +152,7 @@ func printRows(rows *sql.Rows, jsonOutput bool) error {
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 8, 2, ' ', 0)
+	tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
 	fmt.Fprintln(tw, strings.Join(cols, "\t"))
 	for rows.Next() {
 		if err := rows.Scan(scanArgs...); err != nil {
