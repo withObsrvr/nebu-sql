@@ -104,7 +104,7 @@ func StartRange(ctx context.Context, path string, start, stop int64, variantFiel
 	if err != nil {
 		return nil, fmt.Errorf("open stdout for %s: %w", path, err)
 	}
-	stream := &Stream{ctx: ctx, cmd: cmd, variantHints: make(map[string]struct{}, len(variantFields))}
+	stream := &Stream{ctx: ctx, cmd: cmd, variantHints: make(map[string]struct{}, len(variantFields)), idleSince: time.Now()}
 	for _, name := range variantFields {
 		stream.variantHints[name] = struct{}{}
 	}
