@@ -101,6 +101,26 @@ func TestParseRow_NormalizesValuesAndDetectsEventType(t *testing.T) {
 	}
 }
 
+func TestNormalizeValue_PreservesLargeIntegersAndDecimals(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+		want string
+	}{
+		{name: "large integer", raw: json.RawMessage(`9007199254740993`), want: "9007199254740993"},
+		{name: "decimal", raw: json.RawMessage(`12.34`), want: "12.34"},
+		{name: "string", raw: json.RawMessage(`"hello"`), want: "hello"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeValue(tc.raw); got != tc.want {
+				t.Fatalf("normalizeValue(%s) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDetectEventType_PrefersExplicitFields(t *testing.T) {
 	raw := map[string]json.RawMessage{
 		"eventType": json.RawMessage(`"swap"`),

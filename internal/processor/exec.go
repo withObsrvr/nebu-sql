@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 type SchemaInfo struct {
@@ -29,7 +32,14 @@ type Stream struct {
 	stderr       bytes.Buffer
 	waitDone     bool
 	variantHints map[string]struct{}
+
+	mu        sync.Mutex
+	inNext    bool
+	idleSince time.Time
 }
+
+var idleReapGrace = 250 * time.Millisecond
+var idleReapPoll = 50 * time.Millisecond
 
 func LookPath(name string) (string, error) {
 	path, err := exec.LookPath(name)
@@ -45,7 +55,7 @@ func Describe(path string) (map[string]any, error) {
 	if err != nil {
 		trimmed := string(bytes.TrimSpace(out))
 		if strings.Contains(trimmed, "unknown flag: --describe-json") {
-			return nil, fmt.Errorf("processor %q does not support --describe-json; reinstall or update it with `nebu install %s`", path, filepathBase(path))
+			return nil, fmt.Errorf("processor %q does not support --describe-json; reinstall or update it with `nebu install %s`", path, filepath.Base(path))
 		}
 		return nil, fmt.Errorf("run %s --describe-json: %w\n%s", path, err, bytes.TrimSpace(out))
 	}
@@ -56,6 +66,10 @@ func Describe(path string) (map[string]any, error) {
 	return doc, nil
 }
 
+// ExtractSchemaInfo reads the constrained schema shape emitted by nebu
+// processors today. It supports either direct top-level properties or a
+// top-level $ref into schema.output.$defs, and uses oneOf.required entries to
+// infer variant fields such as transfer/fee row shapes.
 func ExtractSchemaInfo(doc map[string]any) (*SchemaInfo, error) {
 	root, ok := doc["schema"].(map[string]any)
 	if !ok {
@@ -90,7 +104,7 @@ func StartRange(ctx context.Context, path string, start, stop int64, variantFiel
 	if err != nil {
 		return nil, fmt.Errorf("open stdout for %s: %w", path, err)
 	}
-	stream := &Stream{ctx: ctx, cmd: cmd, variantHints: make(map[string]struct{}, len(variantFields))}
+	stream := &Stream{ctx: ctx, cmd: cmd, variantHints: make(map[string]struct{}, len(variantFields)), idleSince: time.Now()}
 	for _, name := range variantFields {
 		stream.variantHints[name] = struct{}{}
 	}
@@ -101,10 +115,14 @@ func StartRange(ctx context.Context, path string, start, stop int64, variantFiel
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	stream.scanner = scanner
+	go stream.reapIfAbandoned()
 	return stream, nil
 }
 
 func (s *Stream) Next() (*Row, bool, error) {
+	s.markNextStart()
+	defer s.markNextDone()
+
 	if s.scanner.Scan() {
 		line := append([]byte(nil), s.scanner.Bytes()...)
 		row, err := parseRow(line, s.variantHints)
@@ -127,18 +145,27 @@ func (s *Stream) Close() error {
 	if s == nil || s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
-	if s.waitDone {
+
+	s.mu.Lock()
+	waitDone := s.waitDone
+	s.mu.Unlock()
+	if waitDone {
 		return nil
 	}
+
 	_ = s.cmd.Process.Kill()
 	return s.wait()
 }
 
 func (s *Stream) wait() error {
+	s.mu.Lock()
 	if s.waitDone {
+		s.mu.Unlock()
 		return nil
 	}
 	s.waitDone = true
+	s.mu.Unlock()
+
 	if err := s.cmd.Wait(); err != nil {
 		if s.ctx != nil && s.ctx.Err() != nil {
 			return s.ctx.Err()
@@ -150,6 +177,45 @@ func (s *Stream) wait() error {
 		return fmt.Errorf("processor exited with error: %w", err)
 	}
 	return nil
+}
+
+func (s *Stream) markNextStart() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inNext = true
+	s.idleSince = time.Time{}
+}
+
+func (s *Stream) markNextDone() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inNext = false
+	s.idleSince = time.Now()
+}
+
+func (s *Stream) reapIfAbandoned() {
+	ticker := time.NewTicker(idleReapPoll)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mu.Lock()
+		waitDone := s.waitDone
+		inNext := s.inNext
+		idleSince := s.idleSince
+		s.mu.Unlock()
+
+		if waitDone {
+			return
+		}
+		if inNext || idleSince.IsZero() {
+			continue
+		}
+		if time.Since(idleSince) < idleReapGrace {
+			continue
+		}
+		_ = s.Close()
+		return
+	}
 }
 
 func parseRow(line []byte, variantHints map[string]struct{}) (*Row, error) {
@@ -258,15 +324,19 @@ func normalizeValue(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
 	}
+
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
 		return jsonCompact(raw)
 	}
 	switch t := v.(type) {
 	case string:
 		return t
-	case float64:
-		return strconv.FormatFloat(t, 'f', -1, 64)
+	case json.Number:
+		return t.String()
 	case bool:
 		if t {
 			return "true"
@@ -275,12 +345,4 @@ func normalizeValue(raw json.RawMessage) string {
 	default:
 		return jsonCompact(raw)
 	}
-}
-
-func filepathBase(path string) string {
-	parts := strings.Split(path, "/")
-	if len(parts) == 0 {
-		return path
-	}
-	return parts[len(parts)-1]
 }
