@@ -13,12 +13,12 @@
           inherit system;
           config.packageOverrides = prev: {
             duckdb = prev.duckdb.overrideAttrs (_: rec {
-              version = "1.5.1";
+              version = "1.5.5";
               src = prev.fetchFromGitHub {
                 owner = "duckdb";
                 repo = "duckdb";
                 rev = "v${version}";
-                hash = "sha256-FygBpfhvezvUbI969Dta+vZOPt6BnSW2d5gO4I4oB2A=";
+                hash = "sha256-vFXrMcWF5KDYYRjWZb6iJdhGnCAb6SMlSgzlcr+FQ8Y=";
               };
             });
           };
@@ -79,7 +79,7 @@
           pname = "nebu-sql";
           version = packageVersion;
           src = ./.;
-          vendorHash = "sha256-Nwy0guUvdW6Q5qsxHTX5wmOWnDaPfOKJZJNVJ334b0k=";
+          vendorHash = "sha256-KIFEUp60SyEmnLLCq53LfCUpWuydi8bYRA5kMGUxhAg=";
 
           subPackages = [
             "cmd/nebu-sql"
