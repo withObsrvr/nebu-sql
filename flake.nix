@@ -79,7 +79,7 @@
           pname = "nebu-sql";
           version = packageVersion;
           src = ./.;
-          vendorHash = "sha256-KIFEUp60SyEmnLLCq53LfCUpWuydi8bYRA5kMGUxhAg=";
+          vendorHash = "sha256-h6N2b6wkP48vSGl4G/roSRKpZFVjBQGqrNzl5kmpsRk=";
 
           subPackages = [
             "cmd/nebu-sql"
