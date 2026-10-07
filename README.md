@@ -82,6 +82,23 @@ Why that matters:
 
 In short: piping to DuckDB is the Unix primitive; `nebu-sql` turns that primitive into a reusable SQL interface.
 
+## Program status
+
+`nebu-sql` reports query lifecycle states (`working`, `done`, `idle`, and `error`) through the OSC 7501 Program Status Protocol. Reports are written to stderr, so stdout remains reserved for query results. Status reporting from child processors is disabled so the query remains the authoritative status source.
+
+Control reporting with `--program-status MODE`:
+
+- `auto` (default) emits reports only when stderr is an interactive terminal and `TERM` is not `dumb`.
+- `always` emits reports even when stderr is redirected. Use this when a status-aware parent process consumes stderr.
+- `never` disables reports.
+
+Set `NEBU_PROGRAM_STATUS` to choose the default mode without passing the flag. An explicit `--program-status` flag takes precedence:
+
+```bash
+NEBU_PROGRAM_STATUS=never nebu-sql -c "select 1"
+nebu-sql --program-status=always -c "select 1"
+```
+
 ## Cookbook
 
 See [docs/COOKBOOK.md](./docs/COOKBOOK.md) for a growing set of practical queries: counting rows, exploring event shapes, aggregating token volume, comparing processors, joining outputs, and exporting results.

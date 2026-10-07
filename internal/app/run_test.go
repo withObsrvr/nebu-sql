@@ -235,6 +235,18 @@ func queryRows(t *testing.T, query string) *sql.Rows {
 }
 
 func TestParseArgsProgramStatus(t *testing.T) {
+	t.Setenv("NEBU_PROGRAM_STATUS", "never")
+
+	defaultCfg, err := parseArgs([]string{"-c", "select 1"}, func(string) ([]byte, error) {
+		return nil, errors.New("unexpected read")
+	})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if defaultCfg.ProgramStatus != "never" {
+		t.Fatalf("ProgramStatus = %q, want environment default never", defaultCfg.ProgramStatus)
+	}
+
 	cfg, err := parseArgs([]string{"--program-status", "always", "-c", "select 1"}, func(string) ([]byte, error) {
 		return nil, errors.New("unexpected read")
 	})
@@ -254,20 +266,37 @@ func TestParseArgsProgramStatus(t *testing.T) {
 }
 
 func TestRunCLIProgramStatus(t *testing.T) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	err := runCLIWithStatus(
-		[]string{"--program-status", "always", "-c", "select 1"},
-		&stdout,
-		&stderr,
-		func() bool { return false },
-		func(string) ([]byte, error) { return nil, errors.New("unexpected read") },
-	)
-	if err != nil {
-		t.Fatalf("runCLIWithStatus() error = %v", err)
+	tests := []struct {
+		name       string
+		mode       string
+		isTerminal bool
+		wantStatus bool
+	}{
+		{name: "auto terminal", mode: "auto", isTerminal: true, wantStatus: true},
+		{name: "auto redirected", mode: "auto", isTerminal: false, wantStatus: false},
+		{name: "always redirected", mode: "always", isTerminal: false, wantStatus: true},
+		{name: "never terminal", mode: "never", isTerminal: true, wantStatus: false},
 	}
-	if !strings.Contains(stderr.String(), "state=working") || !strings.Contains(stderr.String(), "state=done") {
-		t.Fatalf("status output = %q, want working and done", stderr.String())
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			err := runCLIWithStatus(
+				[]string{"--program-status", tt.mode, "-c", "select 1"},
+				&stdout,
+				&stderr,
+				func() bool { return tt.isTerminal },
+				func(string) ([]byte, error) { return nil, errors.New("unexpected read") },
+			)
+			if err != nil {
+				t.Fatalf("runCLIWithStatus() error = %v", err)
+			}
+			hasLifecycle := strings.Contains(stderr.String(), "state=working") && strings.Contains(stderr.String(), "state=done")
+			if hasLifecycle != tt.wantStatus {
+				t.Fatalf("status output = %q, lifecycle present = %t, want %t", stderr.String(), hasLifecycle, tt.wantStatus)
+			}
+		})
 	}
 }
 
