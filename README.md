@@ -76,6 +76,7 @@ Why that matters:
 - **Less query boilerplate** — you write `FROM nebu('token-transfer', ...)` instead of rebuilding the same `read_json('/dev/stdin')` pattern every time.
 - **Schema-aware discovery** — `nebu-sql` uses `--describe-json` to expose processor-specific top-level columns, so the query surface follows the processor contract.
 - **One SQL surface for many processors** — every installed processor that supports `--describe-json` becomes queryable through the same function shape.
+- **Terminal-aware status** — long-running queries report `working`, `done`, `idle`, and `error` through OSC 7501 without mixing status into query results.
 - **Better multi-processor workflows** — it becomes natural to compare or combine processor outputs in SQL without manually wiring separate shell pipelines for each query.
 - **A cleaner foundation for tools and agents** — `nebu('processor', ...)` is a much better target for saved queries, notebooks, demos, and future agent-written SQL than ad hoc shell pipelines.
 

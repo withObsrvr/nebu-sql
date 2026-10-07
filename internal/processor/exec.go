@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -51,6 +52,7 @@ func LookPath(name string) (string, error) {
 
 func Describe(path string) (map[string]any, error) {
 	cmd := exec.Command(path, "--describe-json")
+	cmd.Env = programStatusDisabledEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		trimmed := string(bytes.TrimSpace(out))
@@ -100,6 +102,7 @@ func StartRange(ctx context.Context, path string, start, stop int64, variantFiel
 		"-q",
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Env = programStatusDisabledEnv()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open stdout for %s: %w", path, err)
@@ -117,6 +120,17 @@ func StartRange(ctx context.Context, path string, start, stop int64, variantFiel
 	stream.scanner = scanner
 	go stream.reapIfAbandoned()
 	return stream, nil
+}
+
+func programStatusDisabledEnv() []string {
+	env := os.Environ()
+	for i, entry := range env {
+		if strings.HasPrefix(entry, "NEBU_PROGRAM_STATUS=") {
+			env[i] = "NEBU_PROGRAM_STATUS=never"
+			return env
+		}
+	}
+	return append(env, "NEBU_PROGRAM_STATUS=never")
 }
 
 func (s *Stream) Next() (*Row, bool, error) {

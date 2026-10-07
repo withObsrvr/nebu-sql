@@ -195,3 +195,17 @@ func writeExecutable(t *testing.T, name, content string) string {
 	}
 	return path
 }
+
+func TestProgramStatusDisabledEnv(t *testing.T) {
+	t.Setenv("NEBU_PROGRAM_STATUS", "always")
+	env := programStatusDisabledEnv()
+	var matches []string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "NEBU_PROGRAM_STATUS=") {
+			matches = append(matches, entry)
+		}
+	}
+	if len(matches) != 1 || matches[0] != "NEBU_PROGRAM_STATUS=never" {
+		t.Fatalf("status env = %v, want [NEBU_PROGRAM_STATUS=never]", matches)
+	}
+}
