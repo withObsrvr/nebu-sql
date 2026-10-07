@@ -18,20 +18,27 @@ import (
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
 	"github.com/withObsrvr/nebu-sql/internal/duck"
+	"github.com/withObsrvr/nebu-sql/internal/programstatus"
 	"github.com/withObsrvr/nebu-sql/internal/version"
+	"golang.org/x/term"
 )
 
 type config struct {
-	Query       string
-	JSONOutput  bool
-	ShowVersion bool
+	Query         string
+	JSONOutput    bool
+	ShowVersion   bool
+	ProgramStatus string
 }
 
 func Run(args []string) error {
-	return runCLI(args, os.Stdout, os.ReadFile)
+	return runCLIWithStatus(args, os.Stdout, os.Stderr, stderrIsTerminal, os.ReadFile)
 }
 
 func runCLI(args []string, stdout io.Writer, readFile func(string) ([]byte, error)) error {
+	return runCLIWithStatus(args, stdout, io.Discard, func() bool { return false }, readFile)
+}
+
+func runCLIWithStatus(args []string, stdout, stderr io.Writer, isTerminal func() bool, readFile func(string) ([]byte, error)) error {
 	cfg, err := parseArgs(args, readFile)
 	if err != nil {
 		return err
@@ -46,7 +53,22 @@ func runCLI(args []string, stdout io.Writer, readFile func(string) ([]byte, erro
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	return run(ctx, cfg, stdout)
+	status := queryStatus{mode: cfg.ProgramStatus, writer: stderr, isTerminal: isTerminal}
+	status.write(programstatus.Working, "Executing query")
+	err = run(ctx, cfg, stdout)
+	reportQueryResult(ctx, status, err)
+	return err
+}
+
+func reportQueryResult(ctx context.Context, status queryStatus, err error) {
+	switch {
+	case ctx.Err() != nil:
+		status.write(programstatus.Idle, "Query canceled")
+	case err != nil:
+		status.write(programstatus.Error, programstatus.SanitizeMessage(err.Error()))
+	default:
+		status.write(programstatus.Done, "Query finished")
+	}
 }
 
 func parseArgs(args []string, readFile func(string) ([]byte, error)) (config, error) {
@@ -57,16 +79,21 @@ func parseArgs(args []string, readFile func(string) ([]byte, error)) (config, er
 	var file string
 	var jsonOutput bool
 	var showVersion bool
+	programStatusMode := programStatusDefault()
 	fs.StringVar(&query, "c", "", "SQL query to execute")
 	fs.StringVar(&file, "file", "", "Path to a .sql file to execute")
 	fs.BoolVar(&jsonOutput, "json", false, "Emit results as newline-delimited JSON objects")
 	fs.BoolVar(&showVersion, "version", false, "Print nebu-sql version")
+	fs.StringVar(&programStatusMode, "program-status", programStatusMode, "Program status reporting: auto, always, or never")
 
 	if err := fs.Parse(args); err != nil {
 		return config{}, usageError(err)
 	}
 	if showVersion {
-		return config{ShowVersion: true}, nil
+		return config{ShowVersion: true, ProgramStatus: programStatusMode}, nil
+	}
+	if err := validateProgramStatusMode(programStatusMode); err != nil {
+		return config{}, usageError(err)
 	}
 	if strings.TrimSpace(query) == "" && strings.TrimSpace(file) == "" {
 		return config{}, usageError(errors.New("either -c or --file is required"))
@@ -82,7 +109,46 @@ func parseArgs(args []string, readFile func(string) ([]byte, error)) (config, er
 		query = string(b)
 	}
 
-	return config{Query: query, JSONOutput: jsonOutput}, nil
+	return config{Query: query, JSONOutput: jsonOutput, ProgramStatus: programStatusMode}, nil
+}
+
+type queryStatus struct {
+	mode       string
+	writer     io.Writer
+	isTerminal func() bool
+}
+
+func (s queryStatus) write(state programstatus.State, message string) {
+	if s.mode == "never" || (s.mode == "auto" && !s.isTerminal()) {
+		return
+	}
+	if err := programstatus.Write(s.writer, state, message); err != nil {
+		_ = err // Status reporting must not make a query fail.
+	}
+}
+
+func programStatusDefault() string {
+	if value := os.Getenv("NEBU_PROGRAM_STATUS"); value != "" {
+		return value
+	}
+	return "auto"
+}
+
+func validateProgramStatusMode(mode string) error {
+	switch mode {
+	case "auto", "always", "never":
+		return nil
+	default:
+		return fmt.Errorf("invalid --program-status value %q: expected auto, always, or never", mode)
+	}
+}
+
+func stderrIsTerminal() bool {
+	return terminalFile(os.Stderr)
+}
+
+func terminalFile(file *os.File) bool {
+	return os.Getenv("TERM") != "dumb" && term.IsTerminal(int(file.Fd()))
 }
 
 func run(ctx context.Context, cfg config, stdout io.Writer) error {
@@ -121,7 +187,7 @@ func run(ctx context.Context, cfg config, stdout io.Writer) error {
 }
 
 func usageError(err error) error {
-	return fmt.Errorf("%w\n\nusage:\n  nebu-sql -c \"SELECT ...\"\n  nebu-sql --file query.sql\n  nebu-sql --version\n\noptions:\n  --json      emit newline-delimited JSON rows\n  --version   print version", err)
+	return fmt.Errorf("%w\n\nusage:\n  nebu-sql -c \"SELECT ...\"\n  nebu-sql --file query.sql\n  nebu-sql --version\n\noptions:\n  --json                 emit newline-delimited JSON rows\n  --program-status MODE  program status reporting: auto, always, or never\n  --version              print version", err)
 }
 
 func printRows(w io.Writer, rows *sql.Rows, jsonOutput bool) error {

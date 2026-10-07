@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -231,4 +232,112 @@ func queryRows(t *testing.T, query string) *sql.Rows {
 		t.Fatalf("query: %v", err)
 	}
 	return rows
+}
+
+func TestParseArgsProgramStatus(t *testing.T) {
+	t.Setenv("NEBU_PROGRAM_STATUS", "never")
+
+	defaultCfg, err := parseArgs([]string{"-c", "select 1"}, func(string) ([]byte, error) {
+		return nil, errors.New("unexpected read")
+	})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if defaultCfg.ProgramStatus != "never" {
+		t.Fatalf("ProgramStatus = %q, want environment default never", defaultCfg.ProgramStatus)
+	}
+
+	cfg, err := parseArgs([]string{"--program-status", "always", "-c", "select 1"}, func(string) ([]byte, error) {
+		return nil, errors.New("unexpected read")
+	})
+	if err != nil {
+		t.Fatalf("parseArgs() error = %v", err)
+	}
+	if cfg.ProgramStatus != "always" {
+		t.Fatalf("ProgramStatus = %q, want always", cfg.ProgramStatus)
+	}
+
+	_, err = parseArgs([]string{"--program-status", "sometimes", "-c", "select 1"}, func(string) ([]byte, error) {
+		return nil, errors.New("unexpected read")
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected auto, always, or never") {
+		t.Fatalf("parseArgs() error = %v, want invalid program status", err)
+	}
+}
+
+func TestRunCLIProgramStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		isTerminal bool
+		wantStatus bool
+	}{
+		{name: "auto terminal", mode: "auto", isTerminal: true, wantStatus: true},
+		{name: "auto redirected", mode: "auto", isTerminal: false, wantStatus: false},
+		{name: "always redirected", mode: "always", isTerminal: false, wantStatus: true},
+		{name: "never terminal", mode: "never", isTerminal: true, wantStatus: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			err := runCLIWithStatus(
+				[]string{"--program-status", tt.mode, "-c", "select 1"},
+				&stdout,
+				&stderr,
+				func() bool { return tt.isTerminal },
+				func(string) ([]byte, error) { return nil, errors.New("unexpected read") },
+			)
+			if err != nil {
+				t.Fatalf("runCLIWithStatus() error = %v", err)
+			}
+			hasLifecycle := strings.Contains(stderr.String(), "state=working") && strings.Contains(stderr.String(), "state=done")
+			if hasLifecycle != tt.wantStatus {
+				t.Fatalf("status output = %q, lifecycle present = %t, want %t", stderr.String(), hasLifecycle, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestReportQueryResult(t *testing.T) {
+	tests := []struct {
+		name      string
+		canceled  bool
+		err       error
+		wantState string
+	}{
+		{name: "success", wantState: "state=done"},
+		{name: "error", err: errors.New("query failed"), wantState: "state=error"},
+		{name: "canceled", canceled: true, err: context.Canceled, wantState: "state=idle"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tt.canceled {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			var output bytes.Buffer
+			status := queryStatus{mode: "always", writer: &output, isTerminal: func() bool { return false }}
+
+			reportQueryResult(ctx, status, tt.err)
+			if !strings.Contains(output.String(), tt.wantState) {
+				t.Fatalf("status output = %q, want %s", output.String(), tt.wantState)
+			}
+		})
+	}
+}
+
+func TestTerminalFileRejectsNonTerminalCharacterDevice(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = devNull.Close() })
+	if terminalFile(devNull) {
+		t.Fatal("os.DevNull reported as a terminal")
+	}
 }
